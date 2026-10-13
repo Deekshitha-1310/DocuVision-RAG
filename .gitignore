@@ -1,0 +1,81 @@
+# ==============================================================================
+# Python & Virtual Environments
+# ==============================================================================
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+share/python-wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+
+# Virtual Environment
+venv/
+env/
+ENV/
+env.bak/
+venv.bak/
+
+# ==============================================================================
+# Local AI Models & Heavy Artifacts (Hugging Face / PyTorch / ColPali / Docling)
+# ==============================================================================
+models/
+*.bin
+*.safetensors
+*.pt
+*.pth
+*.onnx
+*.gguf
+backend/rag_pipeline.zip
+
+# ==============================================================================
+# Runtime Ingestion & Generated Data
+# ==============================================================================
+processed_data/
+data/uploads/
+backend/data/
+staging_docs/
+backend/staging_docs/
+backend/sessions.json
+
+# ==============================================================================
+# Frontend Dependencies & Builds
+# ==============================================================================
+node_modules/
+frontend/node_modules/
+frontend/dist/
+frontend_react/node_modules/
+frontend_react/dist/
+.eslintcache
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# ==============================================================================
+# Environment & IDE Configuration
+# ==============================================================================
+.env
+.env.local
+.env.*.local
+.vscode/
+.idea/
+*.swp
+*.swo
+.DS_Store
+Thumbs.db
