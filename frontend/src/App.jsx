@@ -31,8 +31,21 @@ export default function App() {
   const [activeSessionId, setActiveSessionId] = useState(null);
   const [activeDoc, setActiveDoc] = useState(null);
   const [documentLibrary, setDocumentLibrary] = useState([]);
+
+  // Per-document stored histories: { [doc_stem]: { messages: [], recentQueries: [], retrievedSources: [] } }
+  const [docSessions, setDocSessions] = useState(() => {
+    try {
+      const saved = localStorage.getItem("docuvision_sessions_chat");
+      return saved ? JSON.parse(saved) : {};
+    } catch {
+      return {};
+    }
+  });
+
+  // Active document's live display states
   const [retrievedSources, setRetrievedSources] = useState([]);
   const [recentQueries, setRecentQueries] = useState([]);
+  const [messages, setMessages] = useState([]);
 
   // Accordion Sections (open/close like <details open>)
   const [openSections, setOpenSections] = useState({
@@ -43,7 +56,6 @@ export default function App() {
   });
 
   // Chat State
-  const [messages, setMessages] = useState([]);
   const [inputQuery, setInputQuery] = useState("");
   const [isInferencing, setIsInferencing] = useState(false);
   const [statusMessage, setStatusMessage] = useState("No document loaded");
@@ -58,6 +70,11 @@ export default function App() {
 
   const chatEndRef = useRef(null);
   const fileInputRef = useRef(null);
+  const activeDocStemRef = useRef(null);
+
+  useEffect(() => {
+    activeDocStemRef.current = activeDoc?.doc_stem || null;
+  }, [activeDoc]);
 
   useEffect(() => {
     loadLibrary();
@@ -72,11 +89,51 @@ export default function App() {
     setDocumentLibrary(docs);
   }
 
+  function saveDocState(targetStem, msgs, queries, sources) {
+    if (!targetStem) return;
+    setDocSessions((prev) => {
+      const current = prev[targetStem] || {};
+      const updated = {
+        ...prev,
+        [targetStem]: {
+          messages: msgs !== undefined ? msgs : current.messages || [],
+          recentQueries: queries !== undefined ? queries : current.recentQueries || [],
+          retrievedSources: sources !== undefined ? sources : current.retrievedSources || [],
+        },
+      };
+      try {
+        localStorage.setItem("docuvision_sessions_chat", JSON.stringify(updated));
+      } catch (e) {
+        // Handle storage quota or private window limits
+      }
+      return updated;
+    });
+  }
+
   function toggleSection(key) {
     setOpenSections((prev) => ({ ...prev, [key]: !prev[key] }));
   }
 
   function handleSelectDoc(doc) {
+    const nextStem = doc.doc_stem;
+    const prevStem = activeDoc?.doc_stem;
+
+    // 1. Snapshot previous document's chat & telemetry state before switching
+    if (prevStem && prevStem !== nextStem) {
+      saveDocState(prevStem, messages, recentQueries, retrievedSources);
+    }
+
+    // 2. Retrieve history for target doc
+    const targetHistory = docSessions[nextStem] || {
+      messages: [],
+      recentQueries: [],
+      retrievedSources: [],
+    };
+
+    setMessages(targetHistory.messages || []);
+    setRecentQueries(targetHistory.recentQueries || []);
+    setRetrievedSources(targetHistory.retrievedSources || []);
+
     const meta = doc.metadata || {};
     setActiveSessionId(doc.sessionId);
     setActiveDoc({
@@ -96,12 +153,21 @@ export default function App() {
   function handleClearChat() {
     setMessages([]);
     setRecentQueries([]);
+    setRetrievedSources([]);
+    if (activeDoc?.doc_stem) {
+      saveDocState(activeDoc.doc_stem, [], [], []);
+    }
     setStatusMessage(activeDoc ? "Ready" : "No document loaded");
   }
 
   function handleReplaceDocument() {
+    if (activeDoc?.doc_stem) {
+      saveDocState(activeDoc.doc_stem, messages, recentQueries, retrievedSources);
+    }
     setActiveSessionId(null);
     setActiveDoc(null);
+    setMessages([]);
+    setRecentQueries([]);
     setRetrievedSources([]);
     setStatusType("warning");
     setStatusMessage("No document loaded");
@@ -111,6 +177,11 @@ export default function App() {
     if (!file || !file.name.toLowerCase().endsWith(".pdf")) {
       alert("Please upload a PDF document.");
       return;
+    }
+
+    // Snapshot existing document state before processing new upload
+    if (activeDoc?.doc_stem) {
+      saveDocState(activeDoc.doc_stem, messages, recentQueries, retrievedSources);
     }
 
     setUploadProgress({ progress: 5, status: "Staging document..." });
@@ -127,16 +198,23 @@ export default function App() {
         }
       );
 
+      const newStem = file.name.replace(/\.[^/.]+$/, "");
       setActiveSessionId(res.sessionId);
       setActiveDoc({
         filename: file.name,
-        doc_stem: file.name.replace(/\.[^/.]+$/, ""),
+        doc_stem: newStem,
         mode: pipelineMode,
         pages: res.metadata?.pages ?? 0,
         tables: res.metadata?.tables ?? 0,
         images: res.metadata?.images ?? 0,
         chunks: res.metadata?.chunks ?? 0,
       });
+
+      // Clear for newly uploaded document and initialize entry
+      setMessages([]);
+      setRecentQueries([]);
+      setRetrievedSources([]);
+      saveDocState(newStem, [], [], []);
 
       setUploadProgress(null);
       setStatusType("success");
@@ -187,9 +265,11 @@ export default function App() {
     setStatusType("loading");
     setStatusMessage("Retrieving context & running offline model...");
 
-    if (!recentQueries.includes(query)) {
-      setRecentQueries((prev) => [query, ...prev.slice(0, 6)]);
-    }
+    const nextQueries = !recentQueries.includes(query)
+      ? [query, ...recentQueries.slice(0, 6)]
+      : recentQueries;
+    setRecentQueries(nextQueries);
+    saveDocState(activeDoc?.doc_stem, undefined, nextQueries, undefined);
 
     try {
       await askQuestionStream(
@@ -200,12 +280,14 @@ export default function App() {
           if (event.type === "status") {
             setStatusMessage(event.content);
           } else if (event.type === "sources") {
-            setRetrievedSources(event.content || []);
+            const nextSources = event.content || [];
+            setRetrievedSources(nextSources);
+            saveDocState(activeDocStemRef.current, undefined, undefined, nextSources);
             setMessages((prev) => {
               const updated = [...prev];
               const last = updated[updated.length - 1];
               if (last && last.role === "assistant") {
-                last.sources = event.content || [];
+                last.sources = nextSources;
               }
               return updated;
             });
@@ -223,6 +305,7 @@ export default function App() {
               const updated = [...prev];
               const last = updated[updated.length - 1];
               if (last) last.isStreaming = false;
+              saveDocState(activeDocStemRef.current, updated, undefined, undefined);
               return updated;
             });
             setIsInferencing(false);
@@ -239,6 +322,7 @@ export default function App() {
           last.content += `\n\n⚠️ Error during inference: ${err.message}`;
           last.isStreaming = false;
         }
+        saveDocState(activeDocStemRef.current, updated, undefined, undefined);
         return updated;
       });
       setIsInferencing(false);
